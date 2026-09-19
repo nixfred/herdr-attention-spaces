@@ -1,0 +1,16 @@
+id = "pi.attention-spaces"
+name = "Attention Spaces"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Move a space to the top of the list when its agent is blocked on a question or has finished unseen work."
+platforms = ["linux"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "attention_spaces.py"]
+
+[[actions]]
+id = "sweep"
+title = "Move every space needing attention to top"
+contexts = ["global", "workspace"]
+command = ["python3", "attention_spaces.py", "--sweep"]
