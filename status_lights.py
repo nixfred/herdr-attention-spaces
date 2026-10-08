@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Sort Herdr projects: needs attention, just finished, working, unknown.
+"""Sort Herdr projects by their status light: red, teal, green, hollow, dim.
 
 LOCKED CONTRACT (Fred, 2026-10-08, OMW-HERDR-ORDER). Do not change without him.
-  1. Needs attention (blocked) at the very top, newest first.
-  2. Just finished (done or idle) directly under it, most recent finish first,
-     by Herdr's completion_seq. Viewing a finished project does not move it.
-  3. Working, then everything else, in their existing order.
+  1. Needs attention (blocked, red) at the very top, newest first.
+  2. Just finished (done, teal check: finished and not looked at yet) directly
+     under it, most recent finish first, by Herdr's completion_seq.
+  3. Working (green), in existing order.
+  4. Idle (hollow: finished and already seen, or waiting), most recent finish first.
+  5. Unknown (dim, no agent), in existing order.
+This is Herdr's own light priority (workspace/aggregate.rs), so the list
+always reads top to bottom in light order. Focus never promotes anything;
+looking at a finished project turns teal to hollow and drops it below green.
 test_status_lights.LockedContractTest pins every rule above.
 """
 
@@ -18,7 +23,7 @@ import socket
 import sys
 import uuid
 
-RANKS = {"blocked": 0, "done": 1, "idle": 1, "working": 2, "unknown": 3}
+RANKS = {"blocked": 0, "done": 1, "working": 2, "idle": 3, "unknown": 4}
 FINISHED = {"done", "idle"}
 EVENTS = {"pane.agent_status_changed", "workspace.focused", "tab.focused",
           "workspace.created", "pane.closed"}
@@ -61,12 +66,12 @@ def recency(space, agents):
 
 def ordered(workspaces, agents=()):
     # workspace.list carries the same aggregate light as the sidebar.
-    # Within attention and finished, newest first; a finished project with no
+    # Within red, teal and hollow, newest first; a finished project with no
     # completion number sits at the bottom of its group. Working and unknown
     # keep their order, so selecting a project can never bump it.
     def key(space):
         seq = recency(space, agents)
-        return (RANKS.get(space.get("agent_status"), 3), seq is None, -(seq or 0))
+        return (RANKS.get(space.get("agent_status"), 4), seq is None, -(seq or 0))
     return sorted(workspaces, key=key)
 
 
@@ -96,7 +101,7 @@ def run(environ, now=False):
         print("Status lights: " + ", ".join(
             str(space.get("label", space["workspace_id"])) + " (" +
             str(space.get("agent_status", "unknown")) + ")" for space in wanted
-            if RANKS.get(space.get("agent_status"), 3) < 2), flush=True)
+            if RANKS.get(space.get("agent_status"), 4) < 2), flush=True)
         return True
 
 

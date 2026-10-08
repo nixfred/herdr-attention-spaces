@@ -5,21 +5,31 @@
 > "projects that need attn OR just finished running should sort to the top.
 > Attn needed at the top and just finished sort just under attn needed.
 > Lock that in, we have had to fix this several times."
+> Same night, on the next screenshot: "The green should be above the idle
+> projects correct?"
 
-1. **Needs attention** (blocked) at the very top, newest first.
-2. **Just finished** (done or idle) directly under it, **most recent finish
-   first**, ranked by Herdr's own `completion_seq` from `agent.list`. Viewing a
-   finished project does not move it. A finished project with no completion
-   number sits at the bottom of that group.
-3. **Working**, then **unknown**, each in their existing order. Focus alone
-   never promotes anything.
+The list reads top to bottom in **light order**, the same priority Herdr uses
+for its own lights (`workspace/aggregate.rs`):
+
+1. **Red, needs attention** (blocked), newest first.
+2. **Teal check, just finished** (done: finished and not looked at yet), most
+   recent finish first by Herdr's `completion_seq` from `agent.list`.
+3. **Green, working**, in existing order.
+4. **Hollow ring, idle** (finished and already seen, or waiting), most recent
+   finish first; no completion number sits last.
+5. **Dim, no agent**, in existing order.
+
+Focus never promotes anything. Looking at a finished project turns teal into a
+hollow ring, so it drops below green: once you have seen it, it is no longer
+"just finished".
 
 `test_status_lights.LockedContractTest` pins every rule above. If you change the
 sorter and one of those tests fails, the change is wrong, not the test.
 
-The bug this fixed: the sort was stable within a status, so a project that went
-working → finished kept its old position *below* every older completion and
-landed at the bottom of the finished group instead of the top.
+History of the drift: 09-19 Fred asked for solid lights above hollow; a 09-26
+Codex round put viewed idle above working; 10-08 restored light order (Fred's
+second identical complaint) and added newest-first within red, teal and hollow.
+The 09-26 engine had also never been committed until 10-08.
 
 ## How it works
 
@@ -36,4 +46,4 @@ Vic runs the same `status_lights.py` under its older plugin ID
 `pi.attention-first` in `~/Projects/herdr-attention-first`. Update both hosts
 together and compare sha256.
 
-Validation: `python3 -m unittest test_status_lights -v` (19 tests).
+Validation: `python3 -m unittest test_status_lights -v` (20 tests).
