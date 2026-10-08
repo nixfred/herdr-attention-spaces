@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Sort Herdr projects: needs attention, completed, working, unknown."""
+"""Sort Herdr projects: needs attention, just finished, working, unknown.
+
+LOCKED CONTRACT (Fred, 2026-10-08, OMW-HERDR-ORDER). Do not change without him.
+  1. Needs attention (blocked) at the very top, newest first.
+  2. Just finished (done or idle) directly under it, most recent finish first,
+     by Herdr's completion_seq. Viewing a finished project does not move it.
+  3. Working, then everything else, in their existing order.
+test_status_lights.LockedContractTest pins every rule above.
+"""
 
 import fcntl
 import hashlib
@@ -10,7 +18,8 @@ import socket
 import sys
 import uuid
 
-RANKS = {"blocked": 0, "done": 1, "idle": 2, "working": 3, "unknown": 4}
+RANKS = {"blocked": 0, "done": 1, "idle": 1, "working": 2, "unknown": 3}
+FINISHED = {"done", "idle"}
 EVENTS = {"pane.agent_status_changed", "workspace.focused", "tab.focused",
           "workspace.created", "pane.closed"}
 MAX_REPLY = 4 * 1024 * 1024
@@ -33,11 +42,32 @@ def request(socket_path, method, params):
     return response["result"]
 
 
-def ordered(workspaces):
-    # workspace.list uses the same aggregate state/seen flag as the sidebar
-    # project light. Viewed completions remain above running work.
-    # Stable ties mean selecting a project cannot bump it within its class.
-    return sorted(workspaces, key=lambda space: RANKS.get(space.get("agent_status"), 4))
+def recency(space, agents):
+    # Herdr numbers every state change from one server-wide counter.
+    # completion_seq is the number of the working->idle change that finished
+    # the current idle state; seeing the pane later leaves it untouched.
+    status = space.get("agent_status")
+    mine = [agent for agent in agents if agent.get("workspace_id") == space["workspace_id"]]
+    if status == "blocked":
+        seqs = [agent.get("state_change_seq") for agent in mine
+                if agent.get("agent_status") == "blocked"]
+    elif status in FINISHED:
+        seqs = [agent.get("completion_seq") for agent in mine]
+    else:
+        return None
+    seqs = [seq for seq in seqs if isinstance(seq, int)]
+    return max(seqs) if seqs else None
+
+
+def ordered(workspaces, agents=()):
+    # workspace.list carries the same aggregate light as the sidebar.
+    # Within attention and finished, newest first; a finished project with no
+    # completion number sits at the bottom of its group. Working and unknown
+    # keep their order, so selecting a project can never bump it.
+    def key(space):
+        seq = recency(space, agents)
+        return (RANKS.get(space.get("agent_status"), 3), seq is None, -(seq or 0))
+    return sorted(workspaces, key=key)
 
 
 def run(environ, now=False):
@@ -55,7 +85,8 @@ def run(environ, now=False):
         # Read after acquiring the lock: concurrent hooks and stale events
         # must always sort the current visible lights, not old event payloads.
         spaces = request(socket_path, "workspace.list", {})["workspaces"]
-        wanted = ordered(spaces)
+        agents = request(socket_path, "agent.list", {}).get("agents", [])
+        wanted = ordered(spaces, agents)
         ids = [space["workspace_id"] for space in wanted]
         if ids == [space["workspace_id"] for space in spaces]:
             return False
@@ -65,7 +96,7 @@ def run(environ, now=False):
         print("Status lights: " + ", ".join(
             str(space.get("label", space["workspace_id"])) + " (" +
             str(space.get("agent_status", "unknown")) + ")" for space in wanted
-            if RANKS.get(space.get("agent_status"), 4) < 3), flush=True)
+            if RANKS.get(space.get("agent_status"), 3) < 2), flush=True)
         return True
 
 

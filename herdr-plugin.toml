@@ -1,8 +1,8 @@
 id = "pi.attention-spaces"
 name = "Status Lights"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.8.2"
-description = "Sort project lights: needs attention, completed (unseen and viewed), working, unknown."
+description = "Sort project lights: needs attention, then just finished (newest first), working, unknown."
 platforms = ["linux"]
 
 [[events]]
