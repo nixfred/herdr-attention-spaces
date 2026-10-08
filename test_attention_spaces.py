@@ -74,10 +74,10 @@ class AttentionSpacesTest(unittest.TestCase):
         self.assertTrue(attention_spaces.run(event_env(self.state, "blocked", "w5", "w5:p1")))
         self.assertEqual(self.fake.order()[0], "w5")
 
-    def test_idle_and_working_events_touch_nothing(self):
+    def test_all_status_events_reconcile_attention_tiers(self):
         for status in ("idle", "working", "unknown"):
-            self.assertFalse(attention_spaces.run(event_env(self.state, status, "w2", "w2:p1")))
-        self.assertEqual(self.fake.calls, [])
+            attention_spaces.run(event_env(self.state, status, "w2", "w2:p1"))
+        self.assertEqual(self.fake.order(), ["w5", "w3", "w1", "w2", "w4"])
 
     def test_unrelated_event_ignored(self):
         env = event_env(self.state, "done", name="workspace_focused")
@@ -150,10 +150,10 @@ class AttentionSpacesTest(unittest.TestCase):
         config = Path(self.tmp.name) / "config"
         config.mkdir()
         (config / "attention.json").write_text(json.dumps({"statuses": ["blocked"]}))
-        self.assertFalse(attention_spaces.run(event_env(self.state, "done", config_dir=config)))
-        self.assertEqual(self.fake.calls, [])
-        self.assertTrue(attention_spaces.run(event_env(self.state, "blocked", "w5", "w5:p1",
-                                                       config_dir=config)))
+        attention_spaces.run(event_env(self.state, "done", config_dir=config))
+        self.assertEqual(self.fake.order(), ["w5", "w1", "w2", "w3", "w4"])
+        self.assertFalse(attention_spaces.run(event_env(self.state, "blocked", "w5", "w5:p1",
+                                                        config_dir=config)))
 
     def test_done_event_keeps_hidden_blocked_workspace_above_it(self):
         self.fake.workspaces[4]["agent_status"] = "working"
@@ -232,19 +232,20 @@ class FinishedWhileWatchedTest(unittest.TestCase):
     def test_focusing_a_finished_space_does_not_promote_it_again(self):
         # done -> idle is Herdr marking the tab seen, not new work finishing.
         attention_spaces.run(event_env(self.state, "done"))
+        attention_spaces.run(event_env(self.state, "idle"))
         before = self.fake.order()
         self.assertFalse(attention_spaces.run(event_env(self.state, "idle")))
         self.assertEqual(self.fake.order(), before)
 
-    def test_idle_with_no_history_is_ignored(self):
-        self.assertFalse(attention_spaces.run(event_env(self.state, "idle")))
-        self.assertEqual(self.fake.moves(), [])
+    def test_idle_with_no_history_reconciles_other_attention(self):
+        self.assertTrue(attention_spaces.run(event_env(self.state, "idle")))
+        self.assertEqual(self.fake.moves(), ["w5"])
 
     def test_an_agent_working_again_by_hook_time_is_not_promoted(self):
         attention_spaces.run(event_env(self.state, "working"))
         self.fake.agents = [{"pane_id": "w3:p1", "agent_status": "working"}]
         self.assertFalse(attention_spaces.run(event_env(self.state, "idle")))
-        self.assertEqual(self.fake.moves(), [])
+        self.assertNotIn("w3", self.fake.moves())
 
     def test_a_closed_pane_is_not_promoted(self):
         attention_spaces.run(event_env(self.state, "working"))
@@ -258,7 +259,7 @@ class FinishedWhileWatchedTest(unittest.TestCase):
         (self.config / "attention.json").write_text(
             json.dumps({"promote_focused_completions": False}))
         self.assertFalse(self.working_then("idle", config_dir=self.config))
-        self.assertEqual(self.fake.moves(), [])
+        self.assertNotIn("w3", self.fake.moves())
 
     def test_a_status_list_without_done_excludes_completions(self):
         (self.config / "attention.json").write_text(json.dumps({"statuses": ["blocked"]}))
@@ -291,6 +292,45 @@ class FinishedWhileWatchedTest(unittest.TestCase):
         path = next(self.state.glob("*.status.json"))
         path.write_text("{ not json")
         self.assertFalse(attention_spaces.run(event_env(self.state, "idle")))
+
+
+class PersistentOrderTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name)
+        self.fake = FakeHerdr([("running", "working"), ("finished", "idle"),
+                               ("help", "blocked"), ("shell", "idle")])
+        self.fake.agents = [{"workspace_id": w, "pane_id": w + ":p1", "agent_status": s}
+                            for w, s in [("running", "working"), ("finished", "idle"), ("help", "blocked")]]
+        attention_spaces.request = self.fake.request
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_seen_finished_agents_are_above_working_but_below_help(self):
+        attention_spaces.run(event_env(self.state, "working", "running", "running:p1"))
+        self.assertEqual(self.fake.order(), ["help", "finished", "running", "shell"])
+
+    def test_resuming_work_moves_below_finished_agents(self):
+        self.fake.workspaces[0]["agent_status"] = "blocked"
+        self.fake.agents[0]["agent_status"] = "blocked"
+        attention_spaces.run(event_env(self.state, "blocked", "running", "running:p1"))
+        self.fake.workspaces[0]["agent_status"] = "working"
+        self.fake.agents[0]["agent_status"] = "working"
+        attention_spaces.run(event_env(self.state, "working", "running", "running:p1"))
+        self.assertEqual(self.fake.order(), ["help", "finished", "running", "shell"])
+
+    def test_focus_does_not_change_order_within_finished_tier(self):
+        self.fake.workspaces[0]["agent_status"] = "idle"
+        self.fake.agents[0]["agent_status"] = "idle"
+        attention_spaces.run(event_env(self.state, "idle"), do_sweep=True)
+        before = self.fake.order()
+        attention_spaces.run(event_env(self.state, "idle", "finished", "finished:p1"))
+        self.assertEqual(self.fake.order(), before)
+
+    def test_empty_shell_is_not_a_finished_agent(self):
+        attention_spaces.run(event_env(self.state, "idle"), do_sweep=True)
+        self.assertEqual(self.fake.order()[-1], "shell")
 
 
 if __name__ == "__main__":

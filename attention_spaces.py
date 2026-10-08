@@ -4,7 +4,8 @@
 Herdr reports `blocked` when an agent shows an approval or question UI and
 `done` when unseen background work finishes. Both mean Fred has to look at
 that space. Blocked spaces go to the very top, done spaces right below them.
-No polling, no pane input.
+Idle recognized agents retain the finished tier after being seen. Every status
+change reconciles tiers, including when work resumes. No polling, no pane input.
 
 `done` only happens while the tab is UNSEEN. A space Fred is watching goes
 straight to `idle` when its agent finishes, so the space he is looking at was
@@ -126,7 +127,7 @@ def tier(status):
     return TIER_ORDER.index(status) if status in TIER_ORDER else len(TIER_ORDER)
 
 
-def arrange(socket_path, workspaces, statuses, first=None):
+def arrange(socket_path, workspaces, statuses, first=None, include_idle=True):
     """Put every attention space at the top: blocked first, then done.
 
     Within a tier the relative order is kept, except `first` (the space whose
@@ -139,6 +140,8 @@ def arrange(socket_path, workspaces, statuses, first=None):
     for agent in request(socket_path, "agent.list", {})["agents"]:
         workspace_id = agent.get("workspace_id")
         status = agent["agent_status"]
+        if include_idle and status == IDLE_STATUS:
+            status = COMPLETED_STATUS
         if (workspace_id in status_of and status in statuses
                 and tier(status) < tier(status_of[workspace_id])):
             status_of[workspace_id] = status
@@ -181,7 +184,7 @@ def promote_completion(socket_path, workspace_id, pane_id, statuses):
     return bool(moved)
 
 
-def promote(socket_path, workspace_id, pane_id, statuses):
+def promote(socket_path, workspace_id, pane_id, statuses, include_idle=True):
     workspaces = request(socket_path, "workspace.list", {})["workspaces"]
     target = next((space for space in workspaces if space["workspace_id"] == workspace_id), None)
     if target is None:
@@ -195,16 +198,16 @@ def promote(socket_path, workspace_id, pane_id, statuses):
         status = pane_status(socket_path, pane_id) if pane_id is not None else None
         if status not in statuses:
             return False
-    moved = arrange(socket_path, workspaces, statuses, first=(workspace_id, status))
+    moved = arrange(socket_path, workspaces, statuses, first=(workspace_id, status), include_idle=include_idle)
     if moved:
         print("Moved up: " + ", ".join(moved), flush=True)
     return bool(moved)
 
 
-def sweep(socket_path, statuses):
+def sweep(socket_path, statuses, include_idle=True):
     """Move every space that currently needs attention to the top, blocked above done."""
     workspaces = request(socket_path, "workspace.list", {})["workspaces"]
-    moved = arrange(socket_path, workspaces, statuses)
+    moved = arrange(socket_path, workspaces, statuses, include_idle=include_idle)
     if moved:
         print("Moved up: " + ", ".join(moved), flush=True)
     return len(moved)
@@ -232,6 +235,7 @@ def run(environ, do_sweep=False):
     socket_path = environ["HERDR_SOCKET_PATH"]
     settings = config(environ.get("HERDR_PLUGIN_CONFIG_DIR"))
     statuses = attention_statuses(settings)
+    include_idle = promote_completions(settings)
     target = None
     if not do_sweep:
         target = parse_event(environ)
@@ -247,7 +251,7 @@ def run(environ, do_sweep=False):
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             if do_sweep:
-                return sweep(socket_path, statuses) > 0
+                return sweep(socket_path, statuses, include_idle=include_idle) > 0
             workspace_id, pane_id, status = target
             # Remember this pane's status before acting: the next event needs it
             # to tell "just finished" from "Fred opened a finished space".
@@ -264,11 +268,11 @@ def run(environ, do_sweep=False):
                         live = None
                 write_last_statuses(history_path, history, live)
             if status in statuses:
-                return promote(socket_path, workspace_id, pane_id, statuses)
+                return promote(socket_path, workspace_id, pane_id, statuses, include_idle=include_idle)
             if (status == IDLE_STATUS and previous == WORKING_STATUS
                     and COMPLETED_STATUS in statuses and promote_completions(settings)):
                 return promote_completion(socket_path, workspace_id, pane_id, statuses)
-            return False
+            return sweep(socket_path, statuses, include_idle=include_idle) > 0
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 

@@ -1,16 +1,32 @@
 id = "pi.attention-spaces"
-name = "Attention Spaces"
-version = "0.1.0"
+name = "Status Lights"
+version = "0.3.0"
 min_herdr_version = "0.8.2"
-description = "Move a space to the top of the list when its agent is blocked on a question or has finished unseen work."
+description = "Sort project lights: needs attention, completed (unseen and viewed), working, unknown."
 platforms = ["linux"]
 
 [[events]]
 on = "pane.agent_status_changed"
-command = ["python3", "attention_spaces.py"]
+command = ["python3", "status_lights.py"]
+
+[[events]]
+on = "workspace.focused"
+command = ["python3", "status_lights.py"]
+
+[[events]]
+on = "tab.focused"
+command = ["python3", "status_lights.py"]
+
+[[events]]
+on = "workspace.created"
+command = ["python3", "status_lights.py"]
+
+[[events]]
+on = "pane.closed"
+command = ["python3", "status_lights.py"]
 
 [[actions]]
 id = "sweep"
-title = "Move every space needing attention to top"
+title = "Sort projects by status light"
 contexts = ["global", "workspace"]
-command = ["python3", "attention_spaces.py", "--sweep"]
+command = ["python3", "status_lights.py", "--now"]
