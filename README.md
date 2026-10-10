@@ -39,8 +39,8 @@ create and close hooks trigger it; the `sweep` action runs it on demand
 (`herdr plugin action invoke pi.attention-spaces.sweep`). Recent Spaces must
 stay disabled.
 
-Gus additionally runs the SSH bridge for `vic:` projects. See
-[bridge, verification and rollback](../herdr-ssh-status/README.md).
+Gus additionally runs an SSH bridge that feeds `vic:` projects into the same list. The bridge
+lives outside this repository.
 
 Vic runs the same `status_lights.py` under its older plugin ID
 `pi.attention-first` in `~/Projects/herdr-attention-first`. Update both hosts
